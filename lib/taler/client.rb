@@ -102,7 +102,8 @@ module Taler
 
       # The merchant API answers 200 to every request this gem makes.
       # Anything else explains a failure, including 202 which asks for
-      # two-factor authentication.
+      # two-factor authentication on the token endpoint.
+      # See: https://docs.taler.net/core/api-merchant.html
       return JSON.parse(response.body) if response.is_a?(Net::HTTPOK)
 
       raise RequestError.new(status: response.code.to_i, body: error_body(response.body))
