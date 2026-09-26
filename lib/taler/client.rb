@@ -18,6 +18,7 @@ module Taler
     # Obtain an access token to authenticate all other API calls.
     #
     # @return [String]
+    # @raise [RequestError] If the backend rejects the request or asks for two-factor authentication.
     def request_token
       url = "#{@backend_url}/private/token"
       payload = {scope: "write"}
@@ -33,6 +34,7 @@ module Taler
     #   payment.
     # @return [Hash] The resonse from the backend, usually just containing an
     #   order id, e.g. `{order_id: "xxxxx"}`
+    # @raise [RequestError] If the backend rejects the request.
     def create_order(amount:, summary:, fulfillment_url: nil, fulfillment_message: nil)
       url = "#{@backend_url}/private/orders"
       order = {
@@ -53,6 +55,7 @@ module Taler
 
     # @param order_id [String]
     # @return [Hash] The order status returned by the backend.
+    # @raise [RequestError] If the backend rejects the request.
     def fetch_order(order_id)
       url = "#{@backend_url}/private/orders/#{order_id}"
       request(url)
@@ -63,6 +66,7 @@ module Taler
     # @param reason [String] Why are you refunding?
     #
     # @return [Hash] Response from the merchant backend.
+    # @raise [RequestError] If the backend rejects the request.
     def refund_order(order_id, refund:, reason:)
       url = "#{@backend_url}/private/orders/#{order_id}/refund"
       payload = {refund:, reason:}
@@ -79,7 +83,8 @@ module Taler
     # @param url [String]
     # @param token [String]
     # @param payload [Hash]
-    # @return [String]
+    # @return [Hash] The parsed JSON response.
+    # @raise [RequestError] If the backend responds with anything but 200 OK.
     def request(url, token: auth_token, payload: nil)
       uri = URI(url)
       headers = {
@@ -88,16 +93,27 @@ module Taler
         "User-Agent" => "Taler Ruby"
       }
 
-      if payload.nil?
-        body = Net::HTTP.get(uri, headers)
+      response = if payload.nil?
+        Net::HTTP.get_response(uri, headers)
       else
         headers["Content-Type"] = "application/json"
-        data = JSON.dump(payload)
-        response = Net::HTTP.post(uri, data, headers)
-        body = response.body
+        Net::HTTP.post(uri, JSON.dump(payload), headers)
       end
 
+      # The merchant API answers 200 to every request this gem makes.
+      # Anything else explains a failure, including 202 which asks for
+      # two-factor authentication.
+      return JSON.parse(response.body) if response.is_a?(Net::HTTPOK)
+
+      raise RequestError.new(status: response.code.to_i, body: error_body(response.body))
+    end
+
+    # @param body [String]
+    # @return [Hash, String] The parsed JSON body, or the raw body if it isn't JSON.
+    def error_body(body)
       JSON.parse(body)
+    rescue JSON::ParserError
+      body
     end
   end
 end
